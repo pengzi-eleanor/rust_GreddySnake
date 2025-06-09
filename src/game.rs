@@ -1,6 +1,9 @@
 mod snake;
 mod food;
+mod obstacles;
 
+
+use obstacles::Obstacle;
 use ggez::timer;
 use ggez::{event::EventHandler, graphics, Context, GameResult};
 use ggez::input::keyboard::{KeyCode, KeyMods};
@@ -55,12 +58,14 @@ pub struct Game {
     score2: u32,//player2 score
     game_time: f32,        // 游戏剩余时间（秒）
     game_start_time: f32,  // 游戏开始时间
+    challenge_mode: bool, // 挑战模式
+    obstacles: Vec<Obstacle>,
 }
 
 impl Game {
     pub fn new(ctx: &mut Context) -> GameResult<Game> {
         let snake = Snake::new(ctx, (100.0, 100.0), KeyCode::Up, KeyCode::Down, KeyCode::Left, KeyCode::Right)?;
-        let food = Food::new(ctx)?;
+        let food = Food::new(false)?;
         Ok(Game { 
             snake, 
             snake2: None,
@@ -74,6 +79,8 @@ impl Game {
             score2: 0,
             game_time: 180.0,      // 3分钟 = 180秒
             game_start_time: 0.0,
+            challenge_mode: false,
+            obstacles: Vec::new(),
         })
     }
 
@@ -85,7 +92,7 @@ impl Game {
         } else {
             self.snake2 = None;
         }
-        self.food = Food::new(ctx)?;
+        self.food = Food::new(true)?;
         self.game_state = GameState::Playing;
         self.last_update = 0.0;
         self.score = 0;
@@ -101,16 +108,53 @@ impl Game {
         Ok(())
     }
 
+    fn toggle_challenge_mode(&mut self, ctx: &mut Context) -> GameResult {
+        self.challenge_mode = !self.challenge_mode;
+        if self.challenge_mode {
+            // Initialize moving food and obstacles
+            self.food = Food::new(true)?;
+            self.obstacles = vec![Obstacle::new(), Obstacle::new(), Obstacle::new()];
+        } else {
+            // Revert to normal food and clear obstacles
+            self.food = Food::new(false)?;
+            self.obstacles.clear();
+        }
+        Ok(())
+    }
+
+    fn update_obstacles(&mut self) {
+        for obstacle in &mut self.obstacles {
+            obstacle.update();
+        }
+    }
+
+    fn check_obstacle_collision(&self) -> bool {
+        if let Some(head) = self.snake.body.first() {
+            self.obstacles.iter().any(|o| {
+                o.position.0 == head.0 && o.position.1 == head.1
+            })
+        } else {
+            false
+        }
+    }
+
+    fn draw_obstacles(&self, ctx: &mut Context) -> GameResult {
+        for obstacle in &self.obstacles {
+            obstacle.draw(ctx)?;
+        }
+        Ok(())
+    }
+
     fn check_food_collision(&mut self, ctx: &mut Context) -> GameResult {
         if let Some(head) = self.snake.body.first() {
             if head.0 == self.food.position.0 && head.1 == self.food.position.1 {
                 self.snake.grow = true;
                 self.score +=1;
-                self.food = Food::new(ctx)?;
+                self.food = Food::new(true)?;
                 
                 while self.snake.check_collision(self.food.position) || 
                       self.snake2.as_ref().map_or(false, |s| s.check_collision(self.food.position)) {
-                    self.food = Food::new(ctx)?;
+                    self.food = Food::new(true)?;
                     
                 }
             }
@@ -120,11 +164,11 @@ impl Game {
                 if head.0 == self.food.position.0 && head.1 == self.food.position.1 {
                     snake2.grow = true;
                     self.score2 += 1;
-                    self.food = Food::new(ctx)?;
+                    self.food = Food::new(true)?;
                     
                     while self.snake.check_collision(self.food.position) || 
                           snake2.check_collision(self.food.position) {
-                        self.food = Food::new(ctx)?;
+                        self.food = Food::new(true)?;
                     }
                 }
             }
@@ -325,6 +369,46 @@ impl Game {
             graphics::DrawParam::default()
                 .dest([time_attack_text_x, time_attack_text_y])
         )?;
+
+        // 挑战模式按钮
+
+        let challenge_text = if self.challenge_mode {
+            "Challenge: ON"
+        } else {
+            "Challenge: OFF"
+        };
+        let challenge_button = graphics::Mesh::new_rounded_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            graphics::Rect::new(220.0, 390.0, 200.0, 50.0),
+            8.0,
+            if self.challenge_mode { 
+                graphics::Color::new(0.2, 0.8, 0.2, 1.0) 
+            } else { 
+                graphics::Color::new(0.8, 0.2, 0.2, 1.0) 
+            },
+        )?;
+        graphics::draw(ctx, &challenge_button, graphics::DrawParam::default())?;
+    
+        let challenge_text = graphics::Text::new(graphics::TextFragment {
+            text: challenge_text.to_string(),
+            color: Some(BUTTON_TEXT_COLOR),
+            font: Some(graphics::Font::default()),
+            scale: Some(graphics::PxScale::from(24.0)),
+        });
+
+        let challenge_text_width = challenge_text.width(ctx) as f32;
+        let challenge_text_x = 220.0 + (200.0 - challenge_text_width) / 2.0;
+        let challenge_text_y = 390.0 + (50.0 - 24.0) / 2.0 + 5.0;
+
+        graphics::draw(
+            ctx,
+            &challenge_text,
+            graphics::DrawParam::default()
+                .dest([challenge_text_x, challenge_text_y])
+        )?;
+
+
 
         graphics::present(ctx)
     }
@@ -530,6 +614,11 @@ impl Game {
             )?;
         }
 
+        // 绘制障碍物
+        if self.challenge_mode{
+            self.draw_obstacles(ctx)?;
+        }
+
         // 绘制游戏区域边框
         let border = graphics::Mesh::new_rectangle(
             ctx,
@@ -694,6 +783,11 @@ impl Game {
             }
             GameState::ModeSelect => {
                 if x >= 220.0 && x <= 420.0 {
+                    if x >= 220.0 && x <= 420.0 {
+                        if y >=390.0 && y <= 440.0 {
+                            let _ = self.toggle_challenge_mode(ctx);
+                        }
+                    }
                     if y >= 180.0 && y <= 230.0 {
                         self.game_mode = GameMode::SinglePlayer;
                         self.score = 0;
@@ -765,6 +859,18 @@ impl EventHandler for Game {
             if let Some(snake2) = &mut self.snake2 {
                 snake2.update();
             }
+
+
+        // 挑战模式
+        if self.challenge_mode {
+            self.food.update();
+            self.update_obstacles();
+            
+            if self.check_obstacle_collision() {
+                self.game_state = GameState::GameOver;
+                return Ok(());
+            }
+        }
 
         // 检查游戏结束条件
         let snake1_dead = self.check_boundary_collision() || 
